@@ -1,5 +1,5 @@
 import torch
-from torchsimus.elements.base import ElementShape
+from elements.base import ElementShape
 
 class PointElement(ElementShape):
     def directivity(self, x_local, y_local, z_local, r, frequencies):
