@@ -1,8 +1,8 @@
 import unittest
 import torch
-from geometry.linear import LinearArray
-from geometry.matrix import MatrixArray
-from geometry.base import validate_pose
+from torchsimus.geometry.linear import LinearArray
+from torchsimus.geometry.matrix import MatrixArray
+from torchsimus.geometry.base import validate_pose
 
 class TestM24MatrixArray(unittest.TestCase):
     def test_matrix_linear_equivalence(self):
