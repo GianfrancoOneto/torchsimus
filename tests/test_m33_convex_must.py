@@ -1,8 +1,8 @@
 import unittest
 import math
 import torch
-from geometry.convex import ConvexArray
-from geometry.base import validate_pose
+from torchsimus.geometry.convex import ConvexArray
+from torchsimus.geometry.base import validate_pose
 
 class TestM33ConvexMUST(unittest.TestCase):
     def setUp(self):
