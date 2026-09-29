@@ -1,10 +1,10 @@
 import unittest
 import numpy as np
 import torch
-from geometry.linear import LinearArray
-from elements.rectangular import RectangularElement
-from transducer import Transducer
-from field import pfield
+from torchsimus.geometry.linear import LinearArray
+from torchsimus.elements.rectangular import RectangularElement
+from torchsimus.transducer import Transducer
+from torchsimus.field import pfield
 
 def p4_2v():
     tr = Transducer(LinearArray(64, 0.3e-3), RectangularElement(0.25e-3), center_frequency=2.72e6, bandwidth=0.74)

@@ -1,10 +1,10 @@
 import unittest
 import numpy as np
 import torch
-from geometry.custom import CustomArray
-from elements.rectangular import RectangularElement
-from transducer import Transducer
-from field import pfield3
+from torchsimus.geometry.custom import CustomArray
+from torchsimus.elements.rectangular import RectangularElement
+from torchsimus.transducer import Transducer
+from torchsimus.field import pfield3
 
 def planar_array(xe, ye, fc, bw, width, height):
     N = xe.size
