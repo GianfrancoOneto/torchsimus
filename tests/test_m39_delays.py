@@ -1,8 +1,8 @@
 import unittest
 import math
 import torch
-from probes import get_probe
-from delays import txdelay_focus, txdelay_plane, txdelay_diverging, txdelay3_focus, embed_subaperture, virtual_source
+from torchsimus.probes import get_probe
+from torchsimus.delays import txdelay_focus, txdelay_plane, txdelay_diverging, txdelay3_focus, embed_subaperture, virtual_source
 
 class TestM39Delays(unittest.TestCase):
     def setUp(self):
