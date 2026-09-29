@@ -1,7 +1,7 @@
 import unittest
 import numpy as np
 import torch
-from processing.sptrack import sptrack
+from torchsimus.processing.sptrack import sptrack
 
 def speckle_sequence(M=128, P=5, di=1.5, dj=-0.75, seed=0):
     # speckle sintético trasladado (di filas, dj columnas) por cuadro, con desplazamiento sub-píxel exacto (FFT)
