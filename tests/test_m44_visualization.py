@@ -4,7 +4,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import torch
-from visualization import show_field, show_polar_field, slice_plot, single_slice_plot, doppler_cmap, movie_frames
+from torchsimus.visualization import show_field, show_polar_field, slice_plot, single_slice_plot, doppler_cmap, movie_frames
 
 class TestM44Visualization(unittest.TestCase):
     def test_smoke(self):
