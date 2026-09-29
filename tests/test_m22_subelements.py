@@ -1,10 +1,10 @@
 import unittest
 import torch
-from geometry.linear import LinearArray
-from elements.rectangular import RectangularElement
-from transducer import Transducer
-from physics.geometry import local_geometry
-from physics.propagation import propagation_2d_frequency
+from torchsimus.geometry.linear import LinearArray
+from torchsimus.elements.rectangular import RectangularElement
+from torchsimus.transducer import Transducer
+from torchsimus.physics.geometry import local_geometry
+from torchsimus.physics.propagation import propagation_2d_frequency
 
 class TestM22Subelements(unittest.TestCase):
     def test_subelements_nu_one_equivalence(self):

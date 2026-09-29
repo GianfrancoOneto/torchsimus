@@ -1,6 +1,6 @@
 import unittest
 import torch
-from physics.propagation import propagation_2d_frequency, propagation_with_attenuation
+from torchsimus.physics.propagation import propagation_2d_frequency, propagation_with_attenuation
 
 class TestM21Attenuation(unittest.TestCase):
     def test_attenuation_alpha_zero(self):
