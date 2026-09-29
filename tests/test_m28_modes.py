@@ -1,10 +1,10 @@
 import unittest
 import torch
 import time
-from geometry.linear import LinearArray
-from elements.point import PointElement
-from transducer import Transducer
-from simulator import Simus
+from torchsimus.geometry.linear import LinearArray
+from torchsimus.elements.point import PointElement
+from torchsimus.transducer import Transducer
+from torchsimus.simulator import Simus
 
 class TestM28Modes(unittest.TestCase):
     def test_direct_vs_scattering_equivalence(self):
