@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "torchsimus"
+version = "0.1.0"
+description = "Simulador de ultrasonido tipo SIMUS/MUST, diferenciable y en GPU, escrito en PyTorch"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "Gianfranco Oneto" }]
+dependencies = ["torch>=2.0", "numpy", "scipy", "matplotlib"]
+
+[project.optional-dependencies]
+test = ["pymust"]
+
+[tool.setuptools.packages.find]
+include = ["torchsimus*"]

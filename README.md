@@ -27,3 +27,16 @@ Las ecuaciones analíticas internas emplean la dependencia temporal $e^{-i\omega
 ```python
 def physical_to_torch_spectrum(x):
     return x.conj()
+```
+
+## Instalación
+
+```bash
+pip install torchsimus-0.1.0-py3-none-any.whl   # desde el wheel generado
+pip install -e /ruta/a/torchsimus                 # desde el código fuente (modo desarrollo)
+```
+
+```python
+from torchsimus.probes import get_probe
+from torchsimus.field import pfield
+```
