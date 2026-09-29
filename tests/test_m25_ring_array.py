@@ -1,7 +1,7 @@
 import unittest
 import torch
-from geometry.ring import RingArray
-from geometry.base import validate_pose
+from torchsimus.geometry.ring import RingArray
+from torchsimus.geometry.base import validate_pose
 
 class TestM25RingArray(unittest.TestCase):
     def test_ring_array_properties(self):
