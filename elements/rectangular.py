@@ -1,6 +1,6 @@
 import torch
 from torch import nn
-from torchsimus.elements.base import ElementShape
+from elements.base import ElementShape
 
 class RectangularElement(ElementShape):
     def __init__(self, width):
