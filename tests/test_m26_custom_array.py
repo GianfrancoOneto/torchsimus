@@ -1,11 +1,11 @@
 import unittest
 import torch
-from geometry.linear import LinearArray
-from geometry.custom import CustomArray
-from geometry.base import validate_pose
-from elements.point import PointElement
-from transducer import Transducer
-from simulator import compute_rf_signal
+from torchsimus.geometry.linear import LinearArray
+from torchsimus.geometry.custom import CustomArray
+from torchsimus.geometry.base import validate_pose
+from torchsimus.elements.point import PointElement
+from torchsimus.transducer import Transducer
+from torchsimus.simulator import compute_rf_signal
 
 class TestM26CustomArray(unittest.TestCase):
     def test_custom_linear_equivalence(self):
