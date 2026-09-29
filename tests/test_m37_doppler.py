@@ -2,7 +2,7 @@ import unittest
 import math
 import numpy as np
 import torch
-from processing.doppler import iq2doppler, nyquist_velocity, bmode
+from torchsimus.processing.doppler import iq2doppler, nyquist_velocity, bmode
 
 class TestM37Doppler(unittest.TestCase):
     def test_known_velocity(self):
