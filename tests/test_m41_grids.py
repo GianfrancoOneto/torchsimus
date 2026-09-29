@@ -1,8 +1,8 @@
 import unittest
 import math
 import torch
-from probes import get_probe
-from processing.grids import impolgrid
+from torchsimus.probes import get_probe
+from torchsimus.processing.grids import impolgrid
 
 class TestM41Grids(unittest.TestCase):
     def test_convex_sector(self):

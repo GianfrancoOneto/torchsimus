@@ -2,11 +2,11 @@ import unittest
 import math
 import numpy as np
 import torch
-from probes import get_probe
-from delays import txdelay_plane
-from processing.rf2iq import rf2iq
-from processing.das import das, auto_fnumber
-from processing.doppler import bmode
+from torchsimus.probes import get_probe
+from torchsimus.delays import txdelay_plane
+from torchsimus.processing.rf2iq import rf2iq
+from torchsimus.processing.das import das, auto_fnumber
+from torchsimus.processing.doppler import bmode
 
 def point_echo_rf(tr, xs, zs, fs, n_t=1500, c=1540.0):
     """RF sintético de un punto con una onda plana a 0°: eco en t = (zs + |s - e_n|)/c, pulso gaussiano a fc."""
