@@ -1,9 +1,9 @@
 import unittest
 import numpy as np
-from geometry.linear import LinearArray
-from elements.rectangular import RectangularElement
-from transducer import Transducer
-from movie import mkmovie
+from torchsimus.geometry.linear import LinearArray
+from torchsimus.elements.rectangular import RectangularElement
+from torchsimus.transducer import Transducer
+from torchsimus.movie import mkmovie
 
 class TestM36Mkmovie(unittest.TestCase):
     def setUp(self):
