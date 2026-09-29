@@ -1,6 +1,6 @@
 import unittest
 import torch
-from physics.propagation import elevation_factor
+from torchsimus.physics.propagation import elevation_factor
 
 class TestM23Elevation(unittest.TestCase):
     def test_elevation_symmetry(self):
