@@ -1,8 +1,7 @@
 import sys, os
-sys.path.append("/content/torchsimus")
 import unittest
 import torch
-from spectra import simus_spectrum
+from torchsimus.spectra import simus_spectrum
 
 class TestM13SimusSpectrum(unittest.TestCase):
     def test_transducer_response_peak_and_bandwidth(self):
