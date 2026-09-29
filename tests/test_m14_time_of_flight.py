@@ -1,9 +1,9 @@
 import unittest
 import torch
-from geometry.linear import LinearArray
-from elements.point import PointElement
-from transducer import Transducer
-from simulator import compute_rf_signal
+from torchsimus.geometry.linear import LinearArray
+from torchsimus.elements.point import PointElement
+from torchsimus.transducer import Transducer
+from torchsimus.simulator import compute_rf_signal
 
 
 def hilbert_envelope(x: torch.Tensor) -> torch.Tensor:
