@@ -1,6 +1,6 @@
 import unittest
 import torch
-from elements.circular import CircularElement
+from torchsimus.elements.circular import CircularElement
 
 class TestM27CircularElement(unittest.TestCase):
     def test_circular_element_status(self):
