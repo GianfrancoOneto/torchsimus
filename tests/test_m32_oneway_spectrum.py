@@ -1,6 +1,6 @@
 import unittest
 import torch
-from spectra import simus_spectrum, pulse_spectrum, probe_spectrum, oneway_spectrum
+from torchsimus.spectra import simus_spectrum, pulse_spectrum, probe_spectrum, oneway_spectrum
 
 class TestM32OnewaySpectrum(unittest.TestCase):
     def test_oneway_vs_pulse_echo(self):
