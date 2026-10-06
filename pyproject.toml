@@ -16,3 +16,6 @@ test = ["pymust"]
 
 [tool.setuptools.packages.find]
 include = ["torchsimus*"]
+
+[tool.setuptools.package-data]
+torchsimus = ["cabezales/*.csv"]
