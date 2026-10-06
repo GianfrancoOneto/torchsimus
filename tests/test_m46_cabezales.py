@@ -16,6 +16,13 @@ class TestM46Cabezales(unittest.TestCase):
             self.assertEqual(c.shape, n.shape)
             torch.testing.assert_close(torch.linalg.vector_norm(n, dim=-1), torch.ones(len(n), dtype=n.dtype))
 
+    def test_circulares_son_un_solo_elemento(self):
+        for nombre in cabezales.listar("circular"):
+            c, n = cabezales.cargar(nombre)
+            self.assertEqual(c.shape, (1, 3))
+            self.assertGreater(cabezales.radio(nombre), 0)
+        self.assertIsNone(cabezales.radio("lineal_1_128el_pitch0.3mm"))
+
     def test_lineal_coincide_con_LinearArray(self):
         c, _ = cabezales.cargar("lineal_1_128el_pitch0.3mm")
         torch.testing.assert_close(c, LinearArray(128, 0.3e-3).pose().centers, atol=1e-7, rtol=0)

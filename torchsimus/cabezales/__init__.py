@@ -2,11 +2,13 @@
 Milestone 46: carpeta de cabezales de ejemplo (archivos CSV) que viaja con el paquete.
 
 Cada archivo `<nombre>.csv` tiene una fila por elemento con columnas x, y, z (mm) y nx, ny, nz (normal).
+Los cabezales circulares son UN solo elemento: una fila con una columna extra `radio` (mm).
 
     from torchsimus import cabezales
     cabezales.listar()                       # nombres disponibles (opcional: tipo="convexo")
     cabezales.ruta("convexo_1_128el_R49.57mm")
     centros, normales = cabezales.cargar("anillo_1_64el_R6mm")      # tensores [N, 3] en metros
+    cabezales.radio("circular_1_R3mm")       # radio en m de un cabezal circular (None si no es circular)
     cabezales.generar_ejemplos()             # vuelve a crear los 35 CSV en esta carpeta
 """
 import csv
@@ -48,14 +50,22 @@ def cargar(nombre, dtype=torch.float64):
     return c, n / torch.linalg.vector_norm(n, dim=-1, keepdim=True)
 
 
-def _guardar(carpeta, nombre, centros_m, normales=None):
-    c = np.asarray(centros_m, dtype=float) * 1e3
-    n = np.tile([0.0, 0.0, 1.0], (len(c), 1)) if normales is None else np.asarray(normales, dtype=float)
+def radio(nombre):
+    """Radio (m) de un cabezal circular de un solo elemento (columna `radio`), o None si no tiene."""
+    with open(ruta(nombre), newline="") as f:
+        filas = list(csv.DictReader(f))
+    return float(filas[0]["radio"]) * 1e-3 if filas and filas[0].get("radio") not in (None, "") else None
+
+
+def _guardar(carpeta, nombre, centros_m, normales=None, radio_m=None):
+    c = np.asarray(centros_m, dtype=float).reshape(-1, 3) * 1e3
+    n = np.tile([0.0, 0.0, 1.0], (len(c), 1)) if normales is None else np.asarray(normales, dtype=float).reshape(-1, 3)
     n = n / np.linalg.norm(n, axis=1, keepdims=True)
     with open(Path(carpeta) / f"{nombre}.csv", "w", newline="") as f:
-        f.write("x,y,z,nx,ny,nz\n")
+        f.write("x,y,z,nx,ny,nz" + (",radio" if radio_m is not None else "") + "\n")
         for p, q in zip(c, n):
-            f.write(f"{p[0]:.4f},{p[1]:.4f},{p[2]:.4f},{q[0]:.6f},{q[1]:.6f},{q[2]:.6f}\n")
+            extra = f",{radio_m * 1e3:.4f}" if radio_m is not None else ""
+            f.write(f"{p[0]:.4f},{p[1]:.4f},{p[2]:.4f},{q[0]:.6f},{q[1]:.6f},{q[2]:.6f}{extra}\n")
 
 
 def generar_ejemplos(carpeta=CARPETA):
@@ -67,8 +77,8 @@ def generar_ejemplos(carpeta=CARPETA):
     from torchsimus.geometry.circular import CircularSingleElement
 
     hechos = []
-    def guardar(nombre, c, n=None):
-        _guardar(carpeta, nombre, c, n); hechos.append(nombre)
+    def guardar(nombre, c, n=None, radio_m=None):
+        _guardar(carpeta, nombre, c, n, radio_m); hechos.append(nombre)
     def pose(p):
         return p.centers.numpy(), p.n.numpy()
 
@@ -78,8 +88,9 @@ def generar_ejemplos(carpeta=CARPETA):
         guardar(f"convexo_{i}_{N}el_R{R:g}mm", *pose(ConvexArray(N, pi * 1e-3, R * 1e-3).pose()))
     for i, (nx, ny, pi) in enumerate([(32, 32, 0.300), (16, 16, 0.300), (8, 8, 0.500), (64, 8, 0.250), (24, 24, 0.200)], 1):
         guardar(f"matricial_{i}_{nx}x{ny}_pitch{pi:g}mm", *pose(MatrixArray(nx, ny, pi * 1e-3, pi * 1e-3).pose()))
-    for i, (R, paso) in enumerate([(3.0, 0.19), (5.0, 0.25), (1.5, 0.10), (6.35, 0.30), (2.0, 0.13)], 1):
-        guardar(f"circular_{i}_R{R:g}mm_parches{paso:g}mm", *pose(CircularSingleElement(R * 1e-3).patches(paso * 1e-3)))
+    for i, R in enumerate([3.0, 5.0, 1.5, 6.35, 2.0], 1):        # UN solo elemento circular: 1 fila + radio
+        e = CircularSingleElement(R * 1e-3)
+        guardar(f"circular_{i}_R{R:g}mm", *pose(e.pose()), radio_m=R * 1e-3)
     for i, (N, R) in enumerate([(64, 6.0), (128, 6.0), (32, 3.0), (256, 15.0), (48, 4.0)], 1):
         guardar(f"anillo_{i}_{N}el_R{R:g}mm", *pose(RingArray(N, R * 1e-3).pose()))
     for i, (N, R) in enumerate([(256, 6.0), (128, 5.0), (64, 3.0), (512, 10.0), (192, 8.0)], 1):
