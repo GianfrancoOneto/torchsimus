@@ -39,5 +39,27 @@ class TestM22Subelements(unittest.TestCase):
         self.assertEqual(G_element.shape, (F_num, S, N))
         print("✅ Test de subelementos y suma coherente (Milestone 22) superado con éxito.")
 
+
+class TestM22Directividad(unittest.TestCase):
+    def test_directividad_sin_tensor_FxF(self):
+        # el eje de frecuencia va adelante sin importar cuántas dimensiones tenga x (antes: [F, F, S, N] con B = 1)
+        el = RectangularElement(0.25e-3)
+        x = torch.rand(2, 5, 7); z = torch.rand(2, 5, 7) + 0.1
+        f = torch.linspace(1e6, 4e6, 11)
+        self.assertEqual(el.directivity(x, None, z, None, f).shape, (11, 2, 5, 7))     # [F, B, S, N]
+        self.assertEqual(el.directivity(x[0], None, z[0], None, f).shape, (11, 5, 7))  # [F, S, N]
+        self.assertEqual(el.directivity(x[0], None, z[0], None, f[0]).shape, (5, 7))   # frecuencia escalar
+        on_axis = el.directivity(torch.zeros(1), None, torch.ones(1), None, f)
+        torch.testing.assert_close(on_axis, torch.ones_like(on_axis))
+        print("✅ RectangularElement: eje de frecuencia correcto y cos θ = 1 en el eje.")
+
+    def test_baffle(self):
+        x, z, f = torch.tensor([0.01]), torch.tensor([0.01]), torch.tensor(1e3)        # 45°, sinc ~ 1
+        soft = RectangularElement(0.25e-3).directivity(x, None, z, None, f)
+        sin_ob = RectangularElement(0.25e-3, baffle=None).directivity(x, None, z, None, f)
+        self.assertAlmostEqual(float(soft / sin_ob), 2 ** -0.5, places=5)
+        print("✅ RectangularElement: baffle soft = cos θ; baffle=None = solo sinc.")
+
+
 if __name__ == "__main__":
     unittest.main()
