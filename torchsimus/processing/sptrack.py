@@ -9,7 +9,10 @@ Algoritmo (PIV multipasada, Garcia et al.):
   * en cada pasada el desplazamiento previo se interpola a la grilla nueva y se usa como offset;
   * suavizado robusto penalizado (DCT + GCV + pesos bisquare, Garcia 2010) con pesos sqrt(C).
 El suavizado es una implementación propia del método publicado: los vectores coinciden de cerca
-con pymust, no bit a bit.
+con pymust, no bit a bit. (El smoothn de este archivo es la versión rápida 2-D que usa sptrack;
+el smoothn completo, N-D y con todas las opciones de MUST, está en processing/smoothn.py.)
+
+Incluye la opción subpix="OF" (flujo óptico) además de "PF" (ajuste parabólico).
 """
 import math
 import numpy as np
@@ -126,12 +129,14 @@ def _interp_grid(A, ic0, jc0, ic, jc):
 
 
 # ------------------------------------------------------------------------------ sptrack
-def sptrack(I, winsize, iminc=1, overlap=50, roi=None, device=None):
+def sptrack(I, winsize, iminc=1, overlap=50, roi=None, subpix="PF", device=None):
     """
     I       : [M, N, P] serie de imágenes (modo B, p. ej. uint8).
     winsize : [[m1, n1], [m2, n2], ...] tamaños de ventana (decrecientes, cuadradas).
     iminc   : se correlaciona la imagen k con la k + iminc.
     roi     : máscara booleana [M, N] (por defecto, todo lo finito).
+    subpix  : "PF" = ajuste parabólico del pico (por defecto); "OF" = flujo óptico Lucas-Kanade en la
+              última ventana, como SPTRACK de MUST (en pymust 0.1.9 esta opción falla).
     Devuelve (Di, Dj, id, jd) con la misma convención de pymust.sptrack:
         Di = desplazamiento en columnas (x), Dj = en filas (z), id/jd = centros de las ventanas.
     """
@@ -193,6 +198,22 @@ def sptrack(I, winsize, iminc=1, overlap=50, roi=None, device=None):
         sub_j = torch.where((b0 > 0) & (b0 < n - 1), (bm - bp) / (2 * bm - 4 * Rc + 2 * bp), torch.zeros_like(Rc))
         new_i = di.reshape(-1) + (a0 - m // 2) + sub_i
         new_j = dj.reshape(-1) + (b0 - n // 2) + sub_j
+        if subpix.upper() == "OF" and kk == len(winsize) - 1:
+            # Lucas-Kanade (flujo óptico) en vez del ajuste parabólico, solo en la última ventana (como MUST)
+            Di0 = di.reshape(-1).long() + (a0 - m // 2); Dj0 = dj.reshape(-1).long() + (b0 - n // 2)
+            r2b = (pi[:, None] + Di0[:, None] + ri[None]).clamp(0, M - 1)
+            c2b = (pj[:, None] + Dj0[:, None] + rj[None]).clamp(0, N - 1)
+            W2b = torch.nan_to_num(I[r2b[:, :, None], c2b[:, None, :], :][..., iminc:])
+            okb = (pi + Di0 >= 0) & (pj + Dj0 >= 0) & (pi + Di0 + m < M) & (pj + Dj0 + n < N)
+            gi, gj = torch.gradient(0.5 * (W1 + W2b), dim=(1, 2))
+            It = W2b - W1
+            a11 = (gi * gi).sum((1, 2, 3)); a12 = (gi * gj).sum((1, 2, 3)); a22 = (gj * gj).sum((1, 2, 3))
+            b1 = (gi * It).sum((1, 2, 3)); b2 = (gj * It).sum((1, 2, 3))
+            det = a11 * a22 - a12 ** 2
+            ei = torch.where(det.abs() > 0, (a22 * b1 - a12 * b2) / det, torch.zeros_like(det))
+            ej = torch.where(det.abs() > 0, (a11 * b2 - a12 * b1) / det, torch.zeros_like(det))
+            new_i = torch.where(okb, Di0 - ei, new_i)                       # W2(x) ≈ W1(x) + ∇W·(D0 - d)  =>  d = D0 - e
+            new_j = torch.where(okb, Dj0 - ej, new_j)
         nan = torch.full_like(new_i, float("nan"))
         di = torch.where(valid, new_i, nan).reshape(len(i_arr), len(j_arr))
         dj = torch.where(valid, new_j, nan).reshape(len(i_arr), len(j_arr))
