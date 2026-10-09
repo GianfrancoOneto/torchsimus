@@ -6,6 +6,8 @@ Campo de presión acústica (Milestones 34-35): equivalentes en PyTorch de PFIEL
     pfield3(...)  -> arreglos planos 2-D (matriciales o cualquier CustomArray), elementos
                      rectangulares width x height, propagación 3-D.
 
+Ambos aceptan freq_sweep (pulso chirp lineal, PARAM.TXfreqsweep de MUST).
+
 Ambos devuelven el campo de presión RMS en cada punto (misma forma que x), y opcionalmente
 el espectro complejo [..., F] y las frecuencias usadas. Todo es diferenciable (retardos,
 apodización, posiciones de los puntos).
@@ -13,7 +15,7 @@ apodización, posiciones de los puntos).
 import math
 import numpy as np
 import torch
-from torchsimus.spectra import pulse_spectrum, probe_spectrum
+from torchsimus.spectra import pulse_spectrum_full, probe_spectrum
 
 # Coeficientes MGBM (multi-Gaussian beam model) de 4 términos, los mismos que usa MUST
 _MGBM_A = [0.187 + 0.275j, 0.288 - 1.954j]
@@ -55,11 +57,11 @@ def _prepare_tx(tx_delays, tx_apodization, N, dtype, device):
     return D, apod
 
 
-def _frequency_grid(fc, bandwidth, n_cycles, df, db_thresh, dtype, device):
+def _frequency_grid(fc, bandwidth, n_cycles, df, db_thresh, dtype, device, freq_sweep=None):
     """f = linspace(0, 2fc, Nf) y se conserva el rango contiguo donde |pulso x sonda| > db_thresh."""
     Nf = int(2 * math.ceil(fc / df) + 1)
     f_all = torch.linspace(0, 2 * fc, Nf, dtype=torch.float64, device=device)
-    S = (pulse_spectrum(f_all, fc, n_cycles) * probe_spectrum(f_all, fc, bandwidth)).abs()
+    S = (pulse_spectrum_full(f_all, fc, n_cycles, freq_sweep) * probe_spectrum(f_all, fc, bandwidth)).abs()
     GdB = 20 * torch.log10(1e-200 + S / S.max())
     ids = torch.nonzero(GdB > db_thresh).flatten()
     keep = torch.zeros(Nf, dtype=torch.bool, device=device)
@@ -78,7 +80,7 @@ def _point_chunk(n_elem_sub, n_freq_chunk, budget):
 def pfield(transducer, x, y, z, tx_delays, tx_apodization=None, *,
            c=1540.0, attenuation=0.0, width=None, height=None, elevation_focus=None,
            baffle="soft", n_cycles=1, element_splitting=None, db_thresh=-60.0,
-           frequency_step=1.0, full_frequency_directivity=False, df=None,
+           frequency_step=1.0, full_frequency_directivity=False, df=None, freq_sweep=None,
            return_spectrum=False, dtype=torch.float32, device=None, budget=2 ** 24):
     """
     Campo de presión RMS de un arreglo 1-D (equivalente a pymust.pfield).
@@ -91,6 +93,7 @@ def pfield(transducer, x, y, z, tx_delays, tx_apodization=None, *,
     attenuation: dB/cm/MHz.   height / elevation_focus: altura y foco en elevación (m) de los
                  elementos, solo se usan si algún y != 0 (modelo 3-D).
     df         : paso de frecuencia fijo (lo usa mkmovie). Si es None se elige como MUST.
+    freq_sweep : None = seno enventanado; un número (Hz) = pulso chirp lineal (PARAM.TXfreqsweep).
     Devuelve RP (misma forma que x) y, si return_spectrum=True, (RP, SPECT[..., F], f).
     """
     if device is None:
@@ -167,11 +170,11 @@ def pfield(transducer, x, y, z, tx_delays, tx_apodization=None, *,
             for i in range(0, P, pc):
                 rmax = max(rmax, float(geom(pts[i:i + pc])[0].max()))
         df = frequency_step / (rmax / c + float(D.detach().max()))
-    f_all, keep, df = _frequency_grid(fc, bw, n_cycles, df, db_thresh, torch.float64, device)
+    f_all, keep, df = _frequency_grid(fc, bw, n_cycles, df, db_thresh, torch.float64, device, freq_sweep)
     f = f_all[keep]
     F = f.numel()
 
-    spect = (pulse_spectrum(f, fc, n_cycles) * probe_spectrum(f, fc, bw)).to(torch.complex128)
+    spect = (pulse_spectrum_full(f, fc, n_cycles, freq_sweep) * probe_spectrum(f, fc, bw)).to(torch.complex128)
     kw = (2 * math.pi * f / c)                                                              # [F]
     kwa = attenuation / 8.69 * f / 1e6 * 1e2                                                # [F] Np/m
     ctype = torch.complex64 if dtype == torch.float32 else torch.complex128
@@ -256,13 +259,14 @@ def pfield(transducer, x, y, z, tx_delays, tx_apodization=None, *,
 def pfield3(transducer, x, y, z, tx_delays, tx_apodization=None, *,
             c=1540.0, attenuation=0.0, width=None, height=None, baffle="soft", n_cycles=1,
             element_splitting=None, db_thresh=-60.0, frequency_step=1.0,
-            full_frequency_directivity=False, return_spectrum=False,
+            full_frequency_directivity=False, freq_sweep=None, return_spectrum=False,
             dtype=torch.float32, device=None, budget=2 ** 24):
     """
     Campo de presión RMS 3-D de un arreglo plano de elementos rectangulares width x height
     (equivalente a pymust.pfield3). La orientación de cada elemento viene de pose():
     width va a lo largo de u, height a lo largo de v, y n es la normal.
     element_splitting: None (automático, como MUST) o (Mu, Mv).
+    freq_sweep: None = seno enventanado; un número (Hz) = pulso chirp lineal.
     """
     if device is None:
         device = transducer.geometry.pose().centers.device
@@ -327,12 +331,12 @@ def pfield3(transducer, x, y, z, tx_delays, tx_apodization=None, *,
         for i in range(0, P, pc):
             rmax = max(rmax, float(geom(pts[i:i + pc])[0].max()))
     df = frequency_step / (rmax / c + float(D.detach().max()))
-    f_all, keep, df = _frequency_grid(fc, bw, n_cycles, df, db_thresh, torch.float64, device)
+    f_all, keep, df = _frequency_grid(fc, bw, n_cycles, df, db_thresh, torch.float64, device, freq_sweep)
     f = f_all[keep]
     F = f.numel()
 
     ctype = torch.complex64 if dtype == torch.float32 else torch.complex128
-    spect = (pulse_spectrum(f, fc, n_cycles) * probe_spectrum(f, fc, bw)).to(ctype)
+    spect = (pulse_spectrum_full(f, fc, n_cycles, freq_sweep) * probe_spectrum(f, fc, bw)).to(ctype)
     kw = 2 * math.pi * f / c
     kwa = attenuation / 8.69 * f / 1e6 * 1e2
     delapod = (torch.exp(1j * (2 * math.pi * f.to(dtype))[:, None, None] * D[None]).sum(1) * apod[None]).to(ctype)

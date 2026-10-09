@@ -5,6 +5,7 @@ from torchsimus.geometry.linear import LinearArray
 from torchsimus.elements.rectangular import RectangularElement
 from torchsimus.transducer import Transducer
 from torchsimus.field import pfield
+from torchsimus.simulation import simus
 
 def p4_2v():
     tr = Transducer(LinearArray(64, 0.3e-3), RectangularElement(0.25e-3), center_frequency=2.72e6, bandwidth=0.74)
@@ -79,6 +80,67 @@ class TestM34Pfield(unittest.TestCase):
         Pt = pfield(self.tr, x2, y, z2, d).numpy()
         self.assertLess(np.abs(Pm / Pm.max() - Pt / Pt.max()).max(), 1e-3)
         print("✅ pfield coincide con pymust (2-D y 3-D con elevación).")
+
+
+def _pymust_fresnel_corregido(pymust):
+    """pymust 0.1.9 falla en utils.fresnelint (usa `x[not issmall]`), así que su chirp nunca funciona.
+    Para comparar contra la fórmula de MUST se reemplaza por la integral de Fresnel exacta de scipy."""
+    from scipy.special import fresnel
+    def fresnelint(x):
+        S, C = fresnel(np.asarray(x, dtype=float))
+        return C + 1j * S
+    pymust.utils.fresnelint = fresnelint
+
+
+class TestM34Simus(unittest.TestCase):
+    """simus (RF con la física de MUST): reutiliza el motor de pfield y le agrega la recepción."""
+    def setUp(self):
+        self.tr = p4_2v()
+        self.x = np.array([-1e-2, 0.0, 1.5e-2]); self.z = np.array([3e-2, 5e-2, 7e-2]); self.RC = np.array([1.0, 0.5, 0.8])
+        self.d = focus_delays(self.tr, 0.0, 5e-2)
+
+    def test_lineal_en_RC(self):
+        a = simus(self.tr, self.x, None, self.z, self.RC, self.d, fs=4 * self.tr.fc)
+        b = simus(self.tr, self.x, None, self.z, 2 * self.RC, self.d, fs=4 * self.tr.fc)
+        torch.testing.assert_close(b, 2 * a)
+        print("✅ simus es lineal en la reflectividad.")
+
+    def test_gradiente_RC(self):
+        RC = torch.tensor(self.RC, requires_grad=True)
+        rf = simus(self.tr, self.x, None, self.z, RC, self.d, fs=4 * self.tr.fc)
+        (rf ** 2).sum().backward()
+        self.assertTrue(torch.isfinite(RC.grad).all() and RC.grad.abs().sum() > 0)
+        print("✅ simus es diferenciable respecto de RC.")
+
+    def test_against_pymust(self):
+        try:
+            import pymust
+        except ImportError:
+            self.skipTest("pymust no instalado")
+        p = pymust.getparam("P4-2v"); p.fs = 4 * p.fc
+        d = pymust.txdelay(p, np.deg2rad(10), np.deg2rad(60))                 # onda divergente
+        for att in (0.0, 0.5):
+            p.attenuation = att
+            RFa = pymust.simus(self.x, self.z, self.RC, d, p)[0]
+            RFb = simus(self.tr, self.x, None, self.z, self.RC, d, fs=p.fs, attenuation=att).numpy()
+            n = min(len(RFa), len(RFb))
+            self.assertLess(np.linalg.norm(RFa[:n] - RFb[:n]) / np.linalg.norm(RFa), 1e-3)
+        print("✅ simus coincide con pymust (sin y con atenuación), sin factor de escala.")
+
+    def test_pfield_chirp_against_pymust(self):
+        try:
+            import pymust
+        except ImportError:
+            self.skipTest("pymust no instalado")
+        _pymust_fresnel_corregido(pymust)
+        x, z = np.meshgrid(np.linspace(-1e-2, 1e-2, 21), np.linspace(5e-3, 4e-2, 25))
+        d = focus_delays(self.tr, 0.0, 2e-2)
+        p = pymust.getparam("P4-2v"); p.TXnow = 4; p.TXfreqsweep = 1e6
+        Pa = pymust.pfield(x, None, z, d, p)[0]
+        Pb = pfield(self.tr, x, None, z, d, n_cycles=4, freq_sweep=1e6, dtype=torch.float64).numpy()
+        self.assertLess(np.linalg.norm(Pa - Pb) / np.linalg.norm(Pa), 1e-3)
+        print("✅ pfield con chirp coincide con pymust.")
+
 
 if __name__ == "__main__":
     unittest.main()

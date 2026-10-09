@@ -5,6 +5,7 @@ from torchsimus.geometry.custom import CustomArray
 from torchsimus.elements.rectangular import RectangularElement
 from torchsimus.transducer import Transducer
 from torchsimus.field import pfield3
+from torchsimus.simulation import simus3
 
 def planar_array(xe, ye, fc, bw, width, height):
     N = xe.size
@@ -48,6 +49,27 @@ class TestM35Pfield3(unittest.TestCase):
         Pt = pfield3(self.tr, x, y, z, d).numpy()
         self.assertLess(np.abs(Pm / Pm.max() - Pt / Pt.max()).max(), 1e-3)
         print("✅ pfield3 coincide con pymust (arreglo matricial).")
+
+
+class TestM35Simus3(unittest.TestCase):
+    def test_against_pymust(self):
+        try:
+            import pymust
+        except ImportError:
+            self.skipTest("pymust no instalado")
+        g = (np.arange(1, 9) - 4.5) * 300e-6
+        xe, ye = np.meshgrid(g, g, indexing="ij"); xe, ye = xe.flatten(order="F"), ye.flatten(order="F")
+        tr = planar_array(xe, ye, 3e6, 0.7, 250e-6, 250e-6)
+        pm = pymust.utils.Param(); pm.fc = 3e6; pm.bandwidth = 70; pm.width = pm.height = 250e-6
+        pm.radius = np.inf; pm.pitch = 300e-6; pm.fs = 12e6; pm.elements = np.array([xe, ye]); pm.Nelements = 64
+        xs, ys, zs = np.array([0, 1e-3, -2e-3]), np.array([0, -1e-3, 2e-3]), np.array([1e-2, 1.5e-2, 2e-2])
+        d = pymust.txdelay3(0, -1e-3, 15e-3, pm.copy())
+        Ra = pymust.simus3(xs, ys, zs, np.ones(3), d, pm.copy())[0]
+        Rb = simus3(tr, xs, ys, zs, np.ones(3), d, fs=pm.fs).numpy()
+        n = min(len(Ra), len(Rb))
+        self.assertLess(np.linalg.norm(Ra[:n] - Rb[:n]) / np.linalg.norm(Ra), 1e-3)
+        print("✅ simus3 coincide con pymust.")
+
 
 if __name__ == "__main__":
     unittest.main()
