@@ -44,5 +44,27 @@ class TestM36Mkmovie(unittest.TestCase):
         self.assertLessEqual(np.abs(Fm.astype(int) - Ft.transpose(1, 0, 2).astype(int)).max(), 2)
         print("✅ mkmovie coincide con pymust (salvo el reordenamiento de pymust).")
 
+
+class TestM36MkmovieScatterers(TestM36Mkmovie):
+    test_frames_and_wavefront = test_attenuation = test_against_pymust = None    # ya se prueban arriba
+
+    def test_scatterers(self):
+        xs, zs, rc = np.array([0.0, 0.3e-2]), np.array([1.5e-2, 2.2e-2]), np.array([1.0, 0.7])
+        F0, _ = mkmovie(self.tr, self.d, movie=[2, 3, 30])
+        F1, _ = mkmovie(self.tr, self.d, movie=[2, 3, 30], scatterers=(xs, zs, rc))
+        self.assertEqual(F0.shape, F1.shape)
+        self.assertGreater(np.abs(F0.astype(int) - F1.astype(int)).max(), 0)       # los ecos cambian la película
+        try:
+            import pymust
+        except ImportError:
+            return
+        p = pymust.getparam("P4-2v"); p.movie = np.array([2, 3, 30])
+        Fm = np.asarray(pymust.mkmovie(xs, zs, rc, self.d, p)[0])
+        # pymust 0.1.9 desordena los píxeles (orden Fortran leído en orden C): se reordenan antes de comparar
+        Fm = np.stack([Fm[..., k].reshape(-1).reshape(Fm.shape[:2], order="F") for k in range(Fm.shape[2])], -1)
+        self.assertLessEqual(np.abs(Fm.astype(int) - F1.astype(int)).max(), 2)
+        print("✅ mkmovie con scatterers coincide con pymust (reordenado).")
+
+
 if __name__ == "__main__":
     unittest.main()
