@@ -1,5 +1,6 @@
 """
 Milestone 40: sondas comerciales (mismos valores que la base de datos de MUST) como Transducer de torchsimus.
+Están las 10 sondas de la base de datos de MUST.
 """
 import math
 from torchsimus.geometry.linear import LinearArray
@@ -13,6 +14,15 @@ PROBES = {
     "L11-5v": dict(fc=7.60e6, pitch=0.300e-3, width=0.270e-3, num_elements=128, bandwidth=0.77, radius=math.inf, height=5e-3,   focus=18e-3),
     "L12-3v": dict(fc=7.54e6, pitch=0.200e-3, width=0.170e-3, num_elements=192, bandwidth=0.93, radius=math.inf, height=5e-3,   focus=20e-3),
     "C5-2v":  dict(fc=3.57e6, pitch=0.508e-3, width=0.460e-3, num_elements=128, bandwidth=0.79, radius=49.57e-3, height=13.5e-3, focus=60e-3),
+    # El resto de la base de datos de MUST. MUST no guarda width, focus ni (a veces) bandwidth
+    # ni height para estas sondas; se completan como lo hace pymust: width = pitch - kerf, bandwidth = 75 %,
+    # arreglo lineal y height / focus infinitos (solo sirven en 2-D, igual que en pymust).
+    "PA4-2/20":  dict(fc=2.5e6, pitch=0.300e-3,  width=0.300e-3 - 50e-6,  num_elements=64,  bandwidth=0.60,  radius=math.inf, height=14e-3,    focus=math.inf),
+    "L9-4/38":   dict(fc=5.0e6, pitch=0.3048e-3, width=0.3048e-3 - 35e-6, num_elements=128, bandwidth=0.65,  radius=math.inf, height=6e-3,     focus=math.inf),
+    "LA530":     dict(fc=3.0e6, pitch=0.245e-3,  width=0.245e-3 - 30e-6,  num_elements=192, bandwidth=0.75,  radius=math.inf, height=math.inf, focus=math.inf),
+    "L14-5/38":  dict(fc=7.2e6, pitch=0.3048e-3, width=0.3048e-3 - 25e-6, num_elements=128, bandwidth=0.70,  radius=math.inf, height=math.inf, focus=math.inf),
+    "L14-5W/60": dict(fc=7.5e6, pitch=0.472e-3,  width=0.472e-3 - 25e-6,  num_elements=128, bandwidth=0.65,  radius=math.inf, height=math.inf, focus=math.inf),
+    "P6-3":      dict(fc=4.5e6, pitch=0.218e-3,  width=0.218e-3 - 25e-6,  num_elements=64,  bandwidth=2 / 3, radius=math.inf, height=math.inf, focus=math.inf),
 }
 
 
