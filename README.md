@@ -32,11 +32,33 @@ def physical_to_torch_spectrum(x):
 
 ## Instalación
 
+Desde GitHub (cualquier computador o Colab; necesita `git` instalado):
+
 ```bash
 pip install git+https://github.com/GianfrancoOneto/torchsimus.git
-pip install torchsimus-0.2.0-py3-none-any.whl     # desde el wheel generado
-pip install -e /ruta/a/torchsimus                 # desde el código fuente (modo desarrollo)
 ```
+
+En Colab o Jupyter se antepone `!`:
+
+```python
+!pip install git+https://github.com/GianfrancoOneto/torchsimus.git
+```
+
+Para actualizar a la última versión después de un cambio en el repo:
+
+```bash
+pip install --force-reinstall --no-deps git+https://github.com/GianfrancoOneto/torchsimus.git
+```
+
+Para desarrollar (editar el código y que los cambios se usen al instante):
+
+```bash
+git clone https://github.com/GianfrancoOneto/torchsimus.git
+cd torchsimus
+pip install -e .
+```
+
+Uso:
 
 ```python
 from torchsimus.probes import get_probe
@@ -69,9 +91,97 @@ from torchsimus.field import pfield
 | `processing/grids.py` | `impolgrid` | `impolgrid` |
 | `visualization.py` | figuras de campos, cortes 3-D, Doppler, películas | — |
 
+## Flujo de datos
+
+[![Diagrama de flujo de torchsimus: clic para ver en grande](docs/flujo.png)](https://raw.githubusercontent.com/GianfrancoOneto/torchsimus/main/docs/flujo.png)
+
+**[Ver el diagrama en pantalla completa](https://raw.githubusercontent.com/GianfrancoOneto/torchsimus/main/docs/flujo.png)**: se abre la imagen sola; con F11 ocupa toda la pantalla.
+
+<details>
+<summary>Diagrama interactivo (Mermaid)</summary>
+
+```mermaid
+flowchart LR
+    User[Usuario]
+    get_probe[get_probe]
+    genscat[genscat]
+    txdelay[txdelay_focus / plane / diverging]
+    geometry[geometry/: LinearArray, ConvexArray, MatrixArray]
+    elements[elements/: RectangularElement]
+    Transducer[Transducer]
+    scat[("scatterers [S,3] + RC")]
+    delays[("tx_delays [E,N]")]
+    RF[("RF [Nt,N]")]
+    IQ[("IQ")]
+    bIQ[("IQ beamformado")]
+    simus[simus / simus3]
+    Simus[Simus nn.Module]
+    pfield[pfield / pfield3]
+    physics[physics/ + spectra.py + pulse.py]
+    tgc[tgc]
+    rf2iq[rf2iq]
+    das[das / das3]
+    bmode[bmode]
+    doppler[iq2doppler]
+    sptrack[sptrack]
+    viz[visualization.py]
+    movie[mkmovie]
+    User --> get_probe
+    User --> genscat
+    User --> txdelay
+    get_probe --> Transducer
+    geometry -.-> Transducer
+    elements -.-> Transducer
+    genscat --> scat
+    Transducer --> txdelay
+    txdelay --> delays
+    Transducer --> simus
+    scat --> simus
+    delays --> simus
+    Transducer -- batch / gradientes --> Simus
+    scat --> Simus
+    delays --> Simus
+    Transducer --> pfield
+    delays --> pfield
+    physics -. física completa MUST .-> simus
+    physics -. modelo 2-D rápido .-> Simus
+    physics -.-> pfield
+    simus --> RF
+    Simus --> RF
+    RF -- opcional --> tgc
+    tgc --> RF
+    RF -- demodulación --> rf2iq
+    rf2iq --> IQ
+    IQ -- delay-and-sum --> das
+    das --> bIQ
+    bIQ --> bmode
+    bIQ --> doppler
+    bmode -- speckle tracking --> sptrack
+    bmode --> viz
+    doppler --> viz
+    pfield --> viz
+    pfield -- animación --> movie
+    classDef config fill:#CECBF6,stroke:#534AB7,color:#26215C,stroke-width:1.5px
+    classDef interno fill:#F1EFE8,stroke:#888780,color:#444441,stroke-dasharray:4 3
+    classDef datos fill:#9FE1CB,stroke:#0F6E56,color:#04342C,stroke-width:1.5px
+    classDef sim fill:#FAC775,stroke:#854F0B,color:#412402,stroke-width:1.5px
+    classDef proc fill:#B5D4F4,stroke:#185FA5,color:#042C53,stroke-width:1.5px
+    classDef salida fill:#F4C0D1,stroke:#993556,color:#4B1528,stroke-width:1.5px
+    class User,get_probe,genscat,txdelay,Transducer config
+    class geometry,elements,physics interno
+    class scat,delays,RF,IQ,bIQ datos
+    class simus,Simus,pfield sim
+    class tgc,rf2iq,das,bmode,doppler,sptrack proc
+    class viz,movie salida
+```
+
+</details>
+
 ## Tests
 
+Desde la carpeta del repo clonado (ver "Para desarrollar"):
+
 ```bash
-pip install -e ".[test]"
+pip install -e ".[test]" pytest
 python -m pytest tests          # un archivo por milestone: tests/test_mXX_*.py
 ```
