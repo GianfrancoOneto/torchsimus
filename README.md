@@ -40,7 +40,15 @@ pip install -e /ruta/a/torchsimus                 # desde el código fuente (mod
 from torchsimus.probes import get_probe
 from torchsimus.field import pfield
 ```
+
 ## Flujo de datos
+
+[![Diagrama de flujo de torchsimus: clic para ver en grande](docs/flujo.png)](https://raw.githubusercontent.com/GianfrancoOneto/torchsimus/main/docs/flujo.png)
+
+**[Ver el diagrama en pantalla completa](https://raw.githubusercontent.com/GianfrancoOneto/torchsimus/main/docs/flujo.png)**: se abre la imagen sola; con F11 ocupa toda la pantalla.
+
+<details>
+<summary>Diagrama interactivo (Mermaid)</summary>
 
 ```mermaid
 flowchart LR
@@ -116,3 +124,5 @@ flowchart LR
     class tgc,rf2iq,das,bmode,doppler,sptrack proc
     class viz,movie salida
 ```
+
+</details>
