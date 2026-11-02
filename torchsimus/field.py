@@ -359,18 +359,22 @@ def pfield3(transducer, x, y, z, tx_delays, tx_apodization=None, *,
         if not full_frequency_directivity:
             amp = amp * _sinc(kc * segw / 2 * sx) * _sinc(kc * segh / 2 * sy)
         out_i = is_out[i:i + pc]
-        z_df = (-dkwa + 1j * dkw) * r
+        Edf = torch.exp((-dkwa + 1j * dkw) * r)                      # (2) una sola vez, antes del bucle
+        need_grad = torch.is_grad_enabled() and (r.requires_grad or amp.requires_grad or delapod_rep.requires_grad)
         for kk in range(F):
             if kk % reanchor == 0:
-                E = torch.exp((-float(kwa[kk]) + 1j * float(kw[kk])) * r) * amp
-                Edf = torch.exp(z_df)
+                # (4) exp más barata: módulo y fase reducida a [0, 2π), como pymust
+                E = torch.polar(torch.exp(-float(kwa[kk]) * r) * amp,
+                                torch.remainder(float(kw[kk]) * r, 2 * math.pi))
             else:
-                E = E * Edf
+                # (3) sin crear un arreglo nuevo en cada frecuencia (solo si no hace falta el gradiente)
+                E = E * Edf if need_grad else E.mul_(Edf)
             if full_frequency_directivity:
                 k_ = float(kw[kk])
-                RPk = ((E * _sinc(k_ * segw / 2 * sx) * _sinc(k_ * segh / 2 * sy)).mean(-1) @ delapod[kk]) * spect[kk]
+                RPmono = (E * _sinc(k_ * segw / 2 * sx) * _sinc(k_ * segh / 2 * sy)).mean(-1)
+                RPk = (RPmono @ delapod[kk][:, None])[:, 0] * spect[kk]          # (1) gemm, no mv
             else:
-                RPk = (E.reshape(E.shape[0], -1) @ delapod_rep[kk]) * spect[kk]
+                RPk = (E.reshape(E.shape[0], -1) @ delapod_rep[kk][:, None])[:, 0] * spect[kk]   # (1)
             RPk = torch.where(out_i, torch.zeros_like(RPk), RPk)
             RP2[i:i + pc] = RP2[i:i + pc] + (RPk.abs() ** 2).to(torch.float64)
             if return_spectrum:
