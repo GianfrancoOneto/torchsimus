@@ -60,8 +60,25 @@ def mkmovie(transducer, tx_delays, tx_apodization=None, *, movie=None, scatterer
         kw_ = 2 * math.pi * f / c
         kwa = attenuation / 8.69 * f / 1e6 * 1e2
         src = Ss * torch.as_tensor(rc, device=dev).to(S.dtype)[:, None]                  # [S, F]
-        eco = torch.stack([torch.exp((-float(kwa[k]) + 1j * float(kw_[k])) * r).to(S.dtype) @ src[:, k]
-                           for k in range(f.numel())], -1)
+        # eco[p, k] = sum_s exp((-kwa_k + i kw_k) r_ps) src[s, k]: exp exacta cada 32 frecuencias y
+        # potencias de exp(i dk r) entre medio, en bloques (una multiplicación de matrices por bloque)
+        Fn = f.numel(); Fb = 32 if Fn > 1 else 1
+        dkw_, dkwa_ = (float(kw_[1] - kw_[0]), float(kwa[1] - kwa[0])) if Fn > 1 else (0.0, 0.0)
+        Edf = torch.exp((-dkwa_ + 1j * dkw_) * r).to(S.dtype)                                  # [P, S]
+        Pw = torch.cat([torch.ones_like(Edf)[None], torch.cumprod(Edf[None].expand(Fb - 1, *Edf.shape), 0)]) \
+            if Fb * Edf.numel() <= 2 ** 22 else None
+        eco = torch.empty(r.shape[0], Fn, dtype=S.dtype, device=dev)
+        for k0 in range(0, Fn, Fb):
+            ks = slice(k0, min(k0 + Fb, Fn)); nb = ks.stop - k0
+            E0 = torch.polar(torch.exp(-float(kwa[k0]) * r), torch.remainder(float(kw_[k0]) * r, 2 * math.pi)).to(S.dtype)
+            if Pw is not None:
+                eco[:, ks] = ((E0[None] * Pw[:nb]) @ src[:, ks].T[:, :, None])[..., 0].T       # [P, nb]
+            else:
+                E = E0
+                for j in range(nb):
+                    if j:
+                        E = E * Edf
+                    eco[:, k0 + j] = (E @ src[:, k0 + j][:, None])[:, 0]
         S = S + eco.reshape(*xi.shape, -1)
     full = torch.zeros(*xi.shape, Nf, dtype=S.dtype, device=S.device)
     full[..., keep] = S                                             # espectro en las Nf frecuencias
