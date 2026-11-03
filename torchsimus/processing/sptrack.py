@@ -30,13 +30,37 @@ def _dct_matrix(n, dtype, device):
 
 
 def _inpaint_nan(A, n_iter=500):
-    """Rellena NaN resolviendo Laplace (difusión) con los valores finitos como condición de borde."""
+    """Rellena NaN resolviendo Laplace (difusión) con los valores finitos como condición de borde.
+    Si hay pocos NaN (lo normal) se resuelve el sistema lineal de una vez: es el mismo punto fijo al que
+    converge la iteración de Jacobi (cada NaN = promedio de sus 4 vecinos, con borde replicado)."""
     A = A.clone()
     miss = ~torch.isfinite(A)
     if not miss.any():
         return A
     if miss.all():
         return torch.zeros_like(A)
+    H, W = A.shape
+    nm = int(miss.sum())
+    if nm <= 3000:
+        uid = torch.full((H, W), -1, dtype=torch.long, device=A.device)
+        mi, mj = miss.nonzero(as_tuple=True)
+        uid[mi, mj] = torch.arange(nm, device=A.device)
+        L = torch.zeros(nm, nm, dtype=A.dtype, device=A.device)
+        b = torch.zeros(nm, dtype=A.dtype, device=A.device)
+        L[torch.arange(nm), torch.arange(nm)] = 4.0
+        Af = torch.nan_to_num(A)
+        rows = torch.arange(nm, device=A.device)
+        for di, dj in ((-1, 0), (1, 0), (0, -1), (0, 1)):
+            ni, nj = (mi + di).clamp(0, H - 1), (mj + dj).clamp(0, W - 1)              # borde replicado
+            k = uid[ni, nj]
+            unk = k >= 0
+            L.index_put_((rows[unk], k[unk]), torch.full_like(k[unk], -1, dtype=A.dtype), accumulate=True)
+            b[~unk] += Af[ni[~unk], nj[~unk]]
+        try:
+            A[mi, mj] = torch.linalg.solve(L, b)
+            return A
+        except RuntimeError:
+            pass
     A[miss] = A[~miss].mean()
     for _ in range(n_iter):
         P = Fnn.pad(A[None, None], (1, 1, 1, 1), mode="replicate")[0, 0]
@@ -175,19 +199,34 @@ def sptrack(I, winsize, iminc=1, overlap=50, roi=None, subpix="PF", device=None)
         c1 = (pj[:, None] + rj[None]).clamp(0, N - 1)
         r2 = (pi[:, None] + oi[:, None] + ri[None]).clamp(0, M - 1)
         c2 = (pj[:, None] + oj[:, None] + rj[None]).clamp(0, N - 1)
-        W1 = I[r1[:, :, None], c1[:, None, :], :][..., :-iminc]
-        W2 = I[r2[:, :, None], c2[:, None, :], :][..., iminc:]
-        valid = valid & torch.isfinite(W1).flatten(1).all(1) & torch.isfinite(W2).flatten(1).all(1)
-        W1 = torch.nan_to_num(W1); W2 = torch.nan_to_num(W2)
+        # ¿ventana sin NaN? con una imagen integral de los píxeles no finitos (sin juntar todas las ventanas)
+        bad1 = (~torch.isfinite(I[..., :-iminc])).any(2).double(); bad2 = (~torch.isfinite(I[..., iminc:])).any(2).double()
+        def _nbad(bad, r0, c0):
+            S = Fnn.pad(bad.cumsum(0).cumsum(1), (1, 0, 1, 0))
+            r0 = r0.clamp(0, M - m); c0 = c0.clamp(0, N - n)
+            return S[r0 + m, c0 + n] - S[r0, c0 + n] - S[r0 + m, c0] + S[r0, c0]
+        valid = valid & (_nbad(bad1, pi, pj) == 0) & (_nbad(bad2, pi + oi, pj + oj) == 0)
+        vsel = valid.nonzero(as_tuple=True)[0]
+        W1 = I[r1[vsel][:, :, None], c1[vsel][:, None, :], :][..., :-iminc]
+        W2 = I[r2[vsel][:, :, None], c2[vsel][:, None, :], :][..., iminc:]
+        # Solo las ventanas válidas (como pymust, que se salta las de fuera de la ROI): FFT real (rfft2),
+        # con las imágenes en el eje 1 para que la FFT 2-D trabaje sobre datos contiguos.
+        vidx = valid.nonzero(as_tuple=True)[0]
+        nW = valid.numel()
         hm = torch.hann_window(m + 2, periodic=False, dtype=torch.float64, device=dev)[1:-1]
         hn = torch.hann_window(n + 2, periodic=False, dtype=torch.float64, device=dev)[1:-1]
-        Hw = (hm[:, None] * hn[None, :])[None, :, :, None]
-        A1 = (W1 - W1.mean(dim=(1, 2, 3), keepdim=True)) * Hw
-        A2 = (W2 - W2.mean(dim=(1, 2, 3), keepdim=True)) * Hw
-        R = torch.fft.fft2(A2, dim=(1, 2)) * torch.fft.fft2(A1, dim=(1, 2)).conj()        # [nW, m, n, P-iminc]
-        R2 = torch.fft.ifft2((R / (R.abs() + 1e-6)).mean(-1), dim=(1, 2)).real
-        C = R2.flatten(1).max(1).values
-        Rs = torch.fft.fftshift(torch.fft.ifft2(R.sum(-1), dim=(1, 2)).real, dim=(1, 2))   # [nW, m, n]
+        Hw = (hm[:, None] * hn[None, :])[None, None]
+        W1v = W1.permute(0, 3, 1, 2); W2v = W2.permute(0, 3, 1, 2)                          # [nV, P-iminc, m, n]
+        A1 = (W1v - W1v.mean(dim=(1, 2, 3), keepdim=True)) * Hw
+        A2 = (W2v - W2v.mean(dim=(1, 2, 3), keepdim=True)) * Hw
+        R = torch.fft.rfft2(A2) * torch.fft.rfft2(A1).conj()                                  # [nV, P-iminc, m, n//2+1]
+        R2v = torch.fft.irfft2((R / (R.abs() + 1e-6)).mean(1), s=(m, n))
+        Rsv = torch.fft.fftshift(torch.fft.irfft2(R.sum(1), s=(m, n)), dim=(1, 2))           # [nV, m, n]
+        C = torch.zeros(nW, dtype=torch.float64, device=dev)
+        C[vidx] = R2v.flatten(1).max(1).values
+        Rs = torch.zeros(nW, m, n, dtype=torch.float64, device=dev)
+        Rs[vidx] = Rsv
+        Rs[~valid, m // 2, n // 2] = 1.0                                                       # ventanas inválidas: se descartan más abajo
         idx = Rs.flatten(1).argmax(1)
         a0, b0 = idx // n, idx % n
         w = torch.arange(Rs.shape[0], device=dev)
@@ -200,6 +239,7 @@ def sptrack(I, winsize, iminc=1, overlap=50, roi=None, subpix="PF", device=None)
         new_j = dj.reshape(-1) + (b0 - n // 2) + sub_j
         if subpix.upper() == "OF" and kk == len(winsize) - 1:
             # Lucas-Kanade (flujo óptico) en vez del ajuste parabólico, solo en la última ventana (como MUST)
+            W1 = torch.nan_to_num(I[r1[:, :, None], c1[:, None, :], :][..., :-iminc])         # todas las ventanas
             Di0 = di.reshape(-1).long() + (a0 - m // 2); Dj0 = dj.reshape(-1).long() + (b0 - n // 2)
             r2b = (pi[:, None] + Di0[:, None] + ri[None]).clamp(0, M - 1)
             c2b = (pj[:, None] + Dj0[:, None] + rj[None]).clamp(0, N - 1)
