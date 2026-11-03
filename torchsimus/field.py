@@ -70,6 +70,12 @@ def _frequency_grid(fc, bandwidth, n_cycles, df, db_thresh, dtype, device, freq_
     return f_all, keep, df_eff
 
 
+
+def _freq_block(n_elem, budget=2 ** 17, block=32):
+    """Frecuencias por bloque: 32 (= el re-anclaje del bucle) si el bloque cabe en la caché; si no, 1 (bucle normal)."""
+    return block if block * n_elem <= budget else 1
+
+
 def _point_chunk(n_elem_sub, n_freq_chunk, budget):
     return max(1, int(budget // max(1, n_elem_sub * n_freq_chunk)))
 
@@ -186,6 +192,7 @@ def pfield(transducer, x, y, z, tx_delays, tx_apodization=None, *,
         Nm = max(3, int(np.round(F / 20)))
         k4set = set((np.round(np.linspace(1, F, Nm)).astype(int) - 1).tolist())
     delapod_rep = delapod.repeat_interleave(M, dim=1) / M                                     # [F, N*M]
+    delapod_rep_s = delapod_rep * spect.to(ctype)[:, None]                                    # espectro ya incluido
     kc = 2 * math.pi * fc / c
     dkw = 2 * math.pi * df / c
     dkwa = attenuation / 8.69 * df / 1e6 * 1e2
@@ -193,7 +200,7 @@ def pfield(transducer, x, y, z, tx_delays, tx_apodization=None, *,
 
     fchunk = 1
     RP2 = torch.zeros(P, dtype=torch.float64, device=device)
-    SPECT = torch.zeros(P, F, dtype=ctype, device=device) if return_spectrum else None
+    SPECT = torch.zeros(F, P, dtype=ctype, device=device) if return_spectrum else None          # [F, P]: filas contiguas
     pc = _point_chunk(N * M, fchunk, budget)
     for i in range(0, P, pc):
         p = pts[i:i + pc]
@@ -211,21 +218,37 @@ def pfield(transducer, x, y, z, tx_delays, tx_apodization=None, *,
             gamma = 0.5j * yy ** 2 / rm
             beta2 = -(yy / rm) ** 2
         out_i = is_out[i:i + pc]
-        z_df = (-dkwa + 1j * dkw) * r                                                       # paso de frecuencia
+        if not elevation and not full_frequency_directivity and _freq_block(r.numel()) > 1:
+            # problema chico: bloques de 32 frecuencias en una sola operación (menos llamadas a PyTorch)
+            Fb = _freq_block(r.numel())
+            Edf = torch.exp((-dkwa + 1j * dkw) * r)
+            Pw = torch.cat([torch.ones_like(Edf)[None], torch.cumprod(Edf[None].expand(Fb - 1, *Edf.shape), 0)])
+            for k0 in range(0, F, Fb):
+                ks = slice(k0, min(k0 + Fb, F))
+                E0 = torch.polar(torch.exp(-float(kwa[k0]) * r) * amp, torch.remainder(float(kw[k0]) * r, 2 * math.pi))
+                E = (E0[None] * Pw[: ks.stop - k0]).reshape(ks.stop - k0, E0.shape[0], -1)   # [Fb, p, N*M]
+                RPk = (E @ delapod_rep_s[ks][:, :, None])[..., 0]                            # [Fb, p]
+                if return_spectrum:
+                    SPECT[ks, i:i + pc] = RPk                                                # RP se calcula al final
+                else:
+                    RP2[i:i + pc] += (RPk.abs() ** 2).sum(0)
+            continue
+        Edf = torch.exp((-dkwa + 1j * dkw) * r)                                              # paso de frecuencia (una sola vez)
+        need_grad = torch.is_grad_enabled() and (r.requires_grad or amp.requires_grad or delapod.requires_grad)
         mg = None
         for kk in range(F):
-            if kk % reanchor == 0:                                                           # exp directa (evita deriva numérica)
-                E = torch.exp((-float(kwa[kk]) + 1j * float(kw[kk])) * r) * amp
-                Edf = torch.exp(z_df)
+            if kk % reanchor == 0:                                                           # re-anclaje (evita deriva numérica)
+                E = torch.polar(torch.exp(-float(kwa[kk]) * r) * amp,
+                                torch.remainder(float(kw[kk]) * r, 2 * math.pi))
             else:
-                E = E * Edf
+                E = E * Edf if need_grad else E.mul_(Edf)
             if not elevation and not full_frequency_directivity:
                 # vía rápida: el promedio sobre sub-elementos se funde con la suma sobre elementos
-                RPk = (E.reshape(E.shape[0], -1) @ delapod_rep[kk]) * spect[kk].to(ctype)
-                RPk = torch.where(out_i, torch.zeros_like(RPk), RPk)
-                RP2[i:i + pc] = RP2[i:i + pc] + (RPk.abs() ** 2).to(torch.float64)
+                RPk = (E.reshape(E.shape[0], -1) @ delapod_rep_s[kk][:, None])[:, 0]
                 if return_spectrum:
-                    SPECT[i:i + pc, kk] = RPk
+                    SPECT[kk, i:i + pc] = RPk
+                else:
+                    RP2[i:i + pc] += RPk.abs() ** 2
                 continue
             if full_frequency_directivity:
                 RPmono = (E * _sinc(float(kw[kk]) * seg / 2 * sin_t)).mean(-1)
@@ -240,12 +263,16 @@ def pfield(transducer, x, y, z, tx_delays, tx_apodization=None, *,
                         mg = mg + A_ * torch.sqrt(math.pi * tmp) * torch.exp(kmg ** 2 * beta2 / 4 * tmp + kmg * gamma)
                     mg = mg.to(ctype)
                 RPmono = RPmono * mg
-            RPk = (RPmono @ delapod[kk]) * spect[kk].to(ctype)                               # [p]
-            RPk = torch.where(out_i, torch.zeros_like(RPk), RPk)
-            RP2[i:i + pc] = RP2[i:i + pc] + (RPk.abs() ** 2).to(torch.float64)
+            RPk = (RPmono @ delapod[kk][:, None])[:, 0] * spect[kk].to(ctype)                               # [p]
             if return_spectrum:
-                SPECT[i:i + pc, kk] = RPk
+                SPECT[kk, i:i + pc] = RPk
+            else:
+                RP2[i:i + pc] += RPk.abs() ** 2
 
+    if return_spectrum:
+        SPECT = torch.where(is_out[:, None], torch.zeros_like(SPECT.T), SPECT.T)            # [P, F]
+        RP2 = (SPECT.abs() ** 2).to(torch.float64).sum(1)
+    RP2 = torch.where(is_out, torch.zeros_like(RP2), RP2)                                   # puntos "fuera" = 0
     cor = df * (1.0 if elevation else width)
     RP = torch.sqrt(RP2 * cor).to(dtype).reshape(shape)
     if return_spectrum:

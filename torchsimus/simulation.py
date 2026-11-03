@@ -27,6 +27,12 @@ from torchsimus.pulse import getpulse
 from torchsimus.spectra import pulse_spectrum_full, probe_spectrum
 
 
+
+def _freq_block(n_elem, budget=2 ** 17, block=32):
+    """Frecuencias por bloque: 32 (= el re-anclaje del bucle) si el bloque cabe en `budget` elementos; si no, 1 (bucle)."""
+    return block if block * n_elem <= budget else 1
+
+
 def _prep_delays(tx_delays, tx_apodization, N, dtype, device):
     D = _as_tensor(tx_delays, dtype, device)
     if D.ndim == 1:
@@ -112,7 +118,8 @@ def simus(transducer, x, y, z, RC, tx_delays, tx_apodization=None, *, fs=None, c
     kwa = attenuation / 8.69 * f / 1e6 * 1e2
     dkw, dkwa = 2 * math.pi * df / c, attenuation / 8.69 * df / 1e6 * 1e2
     kc = 2 * math.pi * fc / c
-    delapod = (torch.exp(1j * (2 * math.pi * f.to(dtype))[:, None, None] * D[None]).sum(1) * apod[None]).to(ctype)   # [F, N]
+    delapod = (torch.exp(1j * (2 * math.pi * f.to(dtype))[:, None, None] * D[None]).sum(1) * apod[None]).to(ctype)
+    delapod_ps = delapod * (pulseS * probeS)[:, None]                                      # pulso x sonda ya incluidos   # [F, N]
     if elevation:
         Nm = max(3, int(np.round(F / 20)))
         k4set = set((np.round(np.linspace(1, F, Nm)).astype(int) - 1).tolist())
@@ -138,19 +145,39 @@ def simus(transducer, x, y, z, RC, tx_delays, tx_apodization=None, *, fs=None, c
             alpha = 0.5j * (1 / Rf - 1 / rm)
             gamma = 0.5j * yy ** 2 / rm
             beta2 = -(yy / rm) ** 2
-        rc_i = RCt[i:i + pc].to(ctype)
         out_i = is_out[i:i + pc]
+        rc_i = torch.where(out_i, torch.zeros_like(RCt[i:i + pc]), RCt[i:i + pc]).to(ctype)   # puntos "fuera" no aportan
         mg = None
+        Fb = 1 if elevation else _freq_block(r.numel())
+        if Fb > 1:
+            # problema chico: bloques de Fb frecuencias en una sola operación (menos llamadas a PyTorch).
+            # Misma recurrencia que el bucle: exp exacta al inicio de cada bloque y potencias de Edf dentro.
+            Edf = torch.exp((-dkwa + 1j * dkw) * r)
+            Pw = torch.cat([torch.ones_like(Edf)[None], torch.cumprod(Edf[None].expand(Fb - 1, *Edf.shape), 0)])
+            for k0 in range(0, F, Fb):
+                ks = slice(k0, min(k0 + Fb, F))
+                kwb = kw[ks].to(r.dtype)[:, None, None, None]
+                E0 = torch.polar(torch.exp(-float(kwa[k0]) * r) * amp, torch.remainder(float(kw[k0]) * r, 2 * math.pi))
+                E = E0[None] * Pw[: ks.stop - k0]                                            # [Fb, p, N, M]
+                if full_frequency_directivity:
+                    RPmono = (E * _sinc(kwb * seg / 2 * sin_t[None])).mean(-1)
+                else:
+                    RPmono = E[..., 0] if M == 1 else E.mean(-1)                             # [Fb, p, N]
+                RPk = (RPmono @ delapod_ps[ks][:, :, None])[..., 0]
+                SPECT[ks] = SPECT[ks] + probeS[ks][:, None] * ((RPk * rc_i[None])[:, None, :] @ RPmono)[:, 0, :]
+            continue
+        Edf = torch.exp((-dkwa + 1j * dkw) * r)                                             # paso de frecuencia (una sola vez)
+        need_grad = torch.is_grad_enabled() and (r.requires_grad or amp.requires_grad or delapod.requires_grad or rc_i.requires_grad)
         for kk in range(F):
             if kk % 32 == 0:                                                                 # re-anclaje: evita deriva numérica
-                E = torch.exp((-float(kwa[kk]) + 1j * float(kw[kk])) * r) * amp
-                Edf = torch.exp((-dkwa + 1j * dkw) * r)
+                E = torch.polar(torch.exp(-float(kwa[kk]) * r) * amp,
+                                torch.remainder(float(kw[kk]) * r, 2 * math.pi))
             else:
-                E = E * Edf
+                E = E * Edf if need_grad else E.mul_(Edf)                                    # sin crear un arreglo nuevo
             if full_frequency_directivity:
                 RPmono = (E * _sinc(float(kw[kk]) * seg / 2 * sin_t)).mean(-1)
             else:
-                RPmono = E.mean(-1)                                                          # [p, N]
+                RPmono = E[..., 0] if M == 1 else E.mean(-1)                                # [p, N]
             if elevation:
                 if mg is None or kk in k4set:
                     k_ = float(kw[kk]); mg = 0
@@ -159,9 +186,8 @@ def simus(transducer, x, y, z, RC, tx_delays, tx_apodization=None, *, fs=None, c
                         mg = mg + A_ * torch.sqrt(math.pi * tmp) * torch.exp(k_ ** 2 * beta2 / 4 * tmp + k_ * gamma)
                     mg = mg.to(ctype)
                 RPmono = RPmono * mg
-            RPk = (RPmono @ delapod[kk]) * pulseS[kk] * probeS[kk]                           # presión en cada scatterer
-            RPk = torch.where(out_i, torch.zeros_like(RPk), RPk)
-            SPECT[kk] = SPECT[kk] + probeS[kk] * ((RPk * rc_i) @ RPmono)                    # recepción (reciprocidad)
+            RPk = (RPmono @ delapod_ps[kk][:, None])[:, 0]                                   # presión en cada scatterer
+            SPECT[kk] += probeS[kk] * ((RPk * rc_i)[None, :] @ RPmono)[0]                    # recepción (reciprocidad)
     if bool((RX != 0).any()):
         SPECT = SPECT * torch.exp(1j * kw[:, None] * c * RX[None])
     SPECT = SPECT * (df * (1.0 if elevation else width))
@@ -221,6 +247,7 @@ def simus3(transducer, x, y, z, RC, tx_delays, tx_apodization=None, *, fs=None, 
     dkw, dkwa = 2 * math.pi * df / c, attenuation / 8.69 * df / 1e6 * 1e2
     kc = 2 * math.pi * fc / c
     delapod = (torch.exp(1j * (2 * math.pi * f.to(dtype))[:, None, None] * D[None]).sum(1) * apod[None]).to(ctype)
+    delapod_ps = delapod * (pulseS * probeS)[:, None]                                      # pulso x sonda ya incluidos
 
     SPECT = torch.zeros(F, N, dtype=ctype, device=device)
     pc = max(1, int(budget // (N * M)))
@@ -239,22 +266,41 @@ def simus3(transducer, x, y, z, RC, tx_delays, tx_apodization=None, *, fs=None, 
         amp = obli / r
         if not full_frequency_directivity:
             amp = amp * _sinc(kc * segw / 2 * sx) * _sinc(kc * segh / 2 * sy)
-        rc_i = RCt[i:i + pc].to(ctype)
         out_i = is_out[i:i + pc]
+        rc_i = torch.where(out_i, torch.zeros_like(RCt[i:i + pc]), RCt[i:i + pc]).to(ctype)   # puntos "fuera" no aportan
+        Fb = _freq_block(r.numel())
+        if Fb > 1:
+            # problema chico: bloques de Fb frecuencias en una sola operación (menos llamadas a PyTorch).
+            # Misma recurrencia que el bucle: exp exacta al inicio de cada bloque y potencias de Edf dentro.
+            Edf = torch.exp((-dkwa + 1j * dkw) * r)
+            Pw = torch.cat([torch.ones_like(Edf)[None], torch.cumprod(Edf[None].expand(Fb - 1, *Edf.shape), 0)])
+            for k0 in range(0, F, Fb):
+                ks = slice(k0, min(k0 + Fb, F))
+                kwb = kw[ks].to(r.dtype)[:, None, None, None]
+                E0 = torch.polar(torch.exp(-float(kwa[k0]) * r) * amp, torch.remainder(float(kw[k0]) * r, 2 * math.pi))
+                E = E0[None] * Pw[: ks.stop - k0]                                            # [Fb, p, N, M]
+                if full_frequency_directivity:
+                    RPmono = (E * _sinc(kwb * segw / 2 * sx[None]) * _sinc(kwb * segh / 2 * sy[None])).mean(-1)
+                else:
+                    RPmono = E[..., 0] if M == 1 else E.mean(-1)
+                RPk = (RPmono @ delapod_ps[ks][:, :, None])[..., 0]
+                SPECT[ks] = SPECT[ks] + probeS[ks][:, None] * ((RPk * rc_i[None])[:, None, :] @ RPmono)[:, 0, :]
+            continue
+        Edf = torch.exp((-dkwa + 1j * dkw) * r)                                             # paso de frecuencia (una sola vez)
+        need_grad = torch.is_grad_enabled() and (r.requires_grad or amp.requires_grad or delapod.requires_grad or rc_i.requires_grad)
         for kk in range(F):
             if kk % 32 == 0:
-                E = torch.exp((-float(kwa[kk]) + 1j * float(kw[kk])) * r) * amp
-                Edf = torch.exp((-dkwa + 1j * dkw) * r)
+                E = torch.polar(torch.exp(-float(kwa[kk]) * r) * amp,
+                                torch.remainder(float(kw[kk]) * r, 2 * math.pi))
             else:
-                E = E * Edf
+                E = E * Edf if need_grad else E.mul_(Edf)                                    # sin crear un arreglo nuevo
             if full_frequency_directivity:
                 k_ = float(kw[kk])
                 RPmono = (E * _sinc(k_ * segw / 2 * sx) * _sinc(k_ * segh / 2 * sy)).mean(-1)
             else:
-                RPmono = E.mean(-1)
-            RPk = (RPmono @ delapod[kk]) * pulseS[kk] * probeS[kk]
-            RPk = torch.where(out_i, torch.zeros_like(RPk), RPk)
-            SPECT[kk] = SPECT[kk] + probeS[kk] * ((RPk * rc_i) @ RPmono)
+                RPmono = E[..., 0] if M == 1 else E.mean(-1)
+            RPk = (RPmono @ delapod_ps[kk][:, None])[:, 0]
+            SPECT[kk] += probeS[kk] * ((RPk * rc_i)[None, :] @ RPmono)[0]
     if bool((RX != 0).any()):
         SPECT = SPECT * torch.exp(1j * kw[:, None] * c * RX[None])
     # Nota: a diferencia de simus, MUST/pymust NO multiplican el espectro por df en PFIELD3/SIMUS3
