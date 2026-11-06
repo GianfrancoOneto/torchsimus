@@ -8,3 +8,8 @@ def tx_weights(frequency, delays, apodization):
     omega = 2 * torch.pi * frequency
     A = apodization * torch.exp(1j * omega * delays)
     return A.T
+
+def tx_weights(frequency, delays, apodization):
+    omega = 2 * torch.pi * frequency
+    A = apodization * torch.exp(1j * omega * delays)
+    return A.T
