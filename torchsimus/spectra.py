@@ -130,3 +130,63 @@ def pulse_spectrum_full(frequencies, fc, n_cycles=1, freq_sweep=None):
         return math.sqrt(math.pi * T / dw) * torch.exp(-1j * (w_ - wc) ** 2 * T / 2 / dw) * \
             (fresnelint((dw / 2 + w_ - wc) / a) + fresnelint((dw / 2 - w_ + wc) / a))
     return (1j * s2(w) - 1j * s2(-w)) / T
+
+def sinc_unormalized(x: torch.Tensor) -> torch.Tensor:
+    return torch.sinc(x / torch.pi)
+
+def simus_spectrum(
+    frequencies,
+    fc,
+    fractional_bandwidth,
+    n_cycles=1
+):
+    w = 2 * torch.pi * frequencies
+    wc = 2 * torch.pi * fc
+    wb = fractional_bandwidth * wc
+
+    T = n_cycles / fc
+
+    Sp = 1j * (
+        sinc_unormalized(
+            T * (w - wc) / 2
+        )
+        -
+        sinc_unormalized(
+            T * (w + wc) / 2
+        )
+    )
+
+    p = (
+        torch.log(
+            torch.tensor(
+                126.,
+                device=w.device,
+                dtype=w.dtype
+            )
+        )
+        /
+        torch.log(
+            torch.tensor(
+                2 * wc / wb,
+                device=w.device,
+                dtype=w.dtype
+            )
+        )
+    )
+
+    St = torch.exp(
+        -torch.log(
+            torch.tensor(
+                2.,
+                device=w.device,
+                dtype=w.dtype
+            )
+        )
+        *
+        (
+            2 * torch.abs(w - wc)
+            / wb
+        ) ** p
+    )
+
+    return Sp * St
