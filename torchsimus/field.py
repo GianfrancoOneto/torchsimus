@@ -71,20 +71,6 @@ def _frequency_grid(fc, bandwidth, n_cycles, df, db_thresh, dtype, device, freq_
 
 
 
-
-def _att(kwa_k, r, amp):
-    """exp(-kwa r) * amp; sin atenuación es exactamente amp (exp(-0 r) = 1), sin calcular la exponencial."""
-    a = float(kwa_k)
-    return amp if a == 0.0 else torch.exp(-a * r) * amp
-
-
-def _step(dkwa, dkw, r):
-    """exp((-dkwa + i dkw) r); sin atenuación es exp(i dkw r) = polar(1, dkw r) (idéntico bit a bit, más barato)."""
-    if float(dkwa) == 0.0:
-        return torch.polar(torch.ones_like(r), dkw * r)
-    return torch.exp((-dkwa + 1j * dkw) * r)
-
-
 def _freq_block(n_elem, budget=2 ** 17, block=32):
     """Frecuencias por bloque: 32 (= el re-anclaje del bucle) si el bloque cabe en la caché; si no, 1 (bucle normal)."""
     return block if block * n_elem <= budget else 1
@@ -101,7 +87,7 @@ def pfield(transducer, x, y, z, tx_delays, tx_apodization=None, *,
            c=1540.0, attenuation=0.0, width=None, height=None, elevation_focus=None,
            baffle="soft", n_cycles=1, element_splitting=None, db_thresh=-60.0,
            frequency_step=1.0, full_frequency_directivity=False, df=None, freq_sweep=None,
-           return_spectrum=False, dtype=torch.float32, device=None, budget=2 ** 20):
+           return_spectrum=False, dtype=torch.float32, device=None, budget=2 ** 24):
     """
     Campo de presión RMS de un arreglo 1-D (equivalente a pymust.pfield).
 
@@ -172,9 +158,6 @@ def pfield(transducer, x, y, z, tx_delays, tx_apodization=None, *,
 
     the = torch.atan2(nrm[:, 0], nrm[:, 2])                                                 # ángulo de cada elemento (convexo)
 
-    def _rdist(p):                                                                           # = r de geom (mismas operaciones)
-        return torch.linalg.vector_norm(p[:, None, None, :] - sub[None], dim=-1).clamp_min(small_d)
-
     def geom(p):
         d = p[:, None, None, :] - sub[None]                                                  # [p, N, M, 3]
         dxz = torch.sqrt(d[..., 0] ** 2 + d[..., 2] ** 2)
@@ -191,7 +174,7 @@ def pfield(transducer, x, y, z, tx_delays, tx_apodization=None, *,
         pc = _point_chunk(N * M, 1, budget)
         with torch.no_grad():
             for i in range(0, P, pc):
-                rmax = max(rmax, float(_rdist(pts[i:i + pc]).max()))
+                rmax = max(rmax, float(geom(pts[i:i + pc])[0].max()))
         df = frequency_step / (rmax / c + float(D.detach().max()))
     f_all, keep, df = _frequency_grid(fc, bw, n_cycles, df, db_thresh, torch.float64, device, freq_sweep)
     f = f_all[keep]
@@ -238,11 +221,11 @@ def pfield(transducer, x, y, z, tx_delays, tx_apodization=None, *,
         if not elevation and not full_frequency_directivity and _freq_block(r.numel()) > 1:
             # problema chico: bloques de 32 frecuencias en una sola operación (menos llamadas a PyTorch)
             Fb = _freq_block(r.numel())
-            Edf = _step(dkwa, dkw, r)
+            Edf = torch.exp((-dkwa + 1j * dkw) * r)
             Pw = torch.cat([torch.ones_like(Edf)[None], torch.cumprod(Edf[None].expand(Fb - 1, *Edf.shape), 0)])
             for k0 in range(0, F, Fb):
                 ks = slice(k0, min(k0 + Fb, F))
-                E0 = torch.polar(_att(kwa[k0], r, amp), torch.remainder(float(kw[k0]) * r, 2 * math.pi))
+                E0 = torch.polar(torch.exp(-float(kwa[k0]) * r) * amp, torch.remainder(float(kw[k0]) * r, 2 * math.pi))
                 E = (E0[None] * Pw[: ks.stop - k0]).reshape(ks.stop - k0, E0.shape[0], -1)   # [Fb, p, N*M]
                 RPk = (E @ delapod_rep_s[ks][:, :, None])[..., 0]                            # [Fb, p]
                 if return_spectrum:
@@ -250,12 +233,12 @@ def pfield(transducer, x, y, z, tx_delays, tx_apodization=None, *,
                 else:
                     RP2[i:i + pc] += (RPk.abs() ** 2).sum(0)
             continue
-        Edf = _step(dkwa, dkw, r)                                              # paso de frecuencia (una sola vez)
+        Edf = torch.exp((-dkwa + 1j * dkw) * r)                                              # paso de frecuencia (una sola vez)
         need_grad = torch.is_grad_enabled() and (r.requires_grad or amp.requires_grad or delapod.requires_grad)
         mg = None
         for kk in range(F):
             if kk % reanchor == 0:                                                           # re-anclaje (evita deriva numérica)
-                E = torch.polar(_att(kwa[kk], r, amp),
+                E = torch.polar(torch.exp(-float(kwa[kk]) * r) * amp,
                                 torch.remainder(float(kw[kk]) * r, 2 * math.pi))
             else:
                 E = E * Edf if need_grad else E.mul_(Edf)
@@ -304,7 +287,7 @@ def pfield3(transducer, x, y, z, tx_delays, tx_apodization=None, *,
             c=1540.0, attenuation=0.0, width=None, height=None, baffle="soft", n_cycles=1,
             element_splitting=None, db_thresh=-60.0, frequency_step=1.0,
             full_frequency_directivity=False, freq_sweep=None, return_spectrum=False,
-            dtype=torch.float32, device=None, budget=2 ** 20):
+            dtype=torch.float32, device=None, budget=2 ** 24):
     """
     Campo de presión RMS 3-D de un arreglo plano de elementos rectangulares width x height
     (equivalente a pymust.pfield3). La orientación de cada elemento viene de pose():
@@ -356,9 +339,6 @@ def pfield3(transducer, x, y, z, tx_delays, tx_apodization=None, *,
     is_out = Z < 0
     small_d = c / fc / 2
 
-    def _rdist(p):                                                                           # = r de geom (mismas operaciones)
-        return torch.linalg.vector_norm(p[:, None, None, :] - sub[None], dim=-1).clamp_min(small_d)
-
     def geom(p):
         d = p[:, None, None, :] - sub[None]
         xl = (d * u[None, :, None, :]).sum(-1)
@@ -376,7 +356,7 @@ def pfield3(transducer, x, y, z, tx_delays, tx_apodization=None, *,
     pc = _point_chunk(N * M, 1, budget)
     with torch.no_grad():
         for i in range(0, P, pc):
-            rmax = max(rmax, float(_rdist(pts[i:i + pc]).max()))
+            rmax = max(rmax, float(geom(pts[i:i + pc])[0].max()))
     df = frequency_step / (rmax / c + float(D.detach().max()))
     f_all, keep, df = _frequency_grid(fc, bw, n_cycles, df, db_thresh, torch.float64, device, freq_sweep)
     f = f_all[keep]
@@ -406,13 +386,12 @@ def pfield3(transducer, x, y, z, tx_delays, tx_apodization=None, *,
         if not full_frequency_directivity:
             amp = amp * _sinc(kc * segw / 2 * sx) * _sinc(kc * segh / 2 * sy)
         out_i = is_out[i:i + pc]
-        any_out = bool(out_i.any())
-        Edf = _step(dkwa, dkw, r)                      # (2) una sola vez, antes del bucle
+        Edf = torch.exp((-dkwa + 1j * dkw) * r)                      # (2) una sola vez, antes del bucle
         need_grad = torch.is_grad_enabled() and (r.requires_grad or amp.requires_grad or delapod_rep.requires_grad)
         for kk in range(F):
             if kk % reanchor == 0:
                 # (4) exp más barata: módulo y fase reducida a [0, 2π), como pymust
-                E = torch.polar(_att(kwa[kk], r, amp),
+                E = torch.polar(torch.exp(-float(kwa[kk]) * r) * amp,
                                 torch.remainder(float(kw[kk]) * r, 2 * math.pi))
             else:
                 # (3) sin crear un arreglo nuevo en cada frecuencia (solo si no hace falta el gradiente)
@@ -423,9 +402,8 @@ def pfield3(transducer, x, y, z, tx_delays, tx_apodization=None, *,
                 RPk = (RPmono @ delapod[kk][:, None])[:, 0] * spect[kk]          # (1) gemm, no mv
             else:
                 RPk = (E.reshape(E.shape[0], -1) @ delapod_rep[kk][:, None])[:, 0] * spect[kk]   # (1)
-            if any_out:
-                RPk = torch.where(out_i, torch.zeros_like(RPk), RPk)
-            RP2[i:i + pc] += (RPk.abs() ** 2).to(torch.float64)
+            RPk = torch.where(out_i, torch.zeros_like(RPk), RPk)
+            RP2[i:i + pc] = RP2[i:i + pc] + (RPk.abs() ** 2).to(torch.float64)
             if return_spectrum:
                 SPECT[i:i + pc, kk] = RPk
 
