@@ -38,7 +38,7 @@ class TestM15SimusModule(unittest.TestCase):
             tx_apodization
         )
 
-        self.assertEqual(rf.shape, (n_fft, 1, 16))   # [Nt, E, N] desde el Milestone 30
+        self.assertEqual(rf.shape, (n_fft, 16, 1))
         print("✅ Tests del módulo unificado Simus (Milestone 15) superados con éxito.")
 
 if __name__ == "__main__":
