@@ -8,3 +8,7 @@ def tx_weights(frequency, delays, apodization):
     omega = 2 * torch.pi * frequency
     A = apodization * torch.exp(1j * omega * delays)
     return A.T
+
+def propagation_2d_frequency(r, frequencies, c=1540.0):
+    k = (2 * torch.pi * frequencies / c)[:, None, None]
+    return torch.exp(1j * k * r[None]) / torch.sqrt(r)[None]
