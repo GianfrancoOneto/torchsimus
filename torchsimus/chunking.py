@@ -14,7 +14,7 @@ def forward_chunked(
     scatter_chunk=8192,
     freq_chunk=16
 ):
-    frequencies = torch.fft.rfftfreq(n_fft, d=1/fs).to(scatterers.device)
+    frequencies = torch.fft.rfftfreq(n_fft, d=1/fs, dtype=scatterers.dtype, device=scatterers.device)
     F = frequencies.numel()
     pose = transducer.geometry.pose()
 
@@ -56,5 +56,5 @@ def forward_chunked(
     Y = torch.cat(blocks, dim=0)
     Q = simus_spectrum(frequencies, transducer.fc, transducer.bandwidth)
     spectrum = Q[:, None, None] * Y
-    rf = torch.fft.irfft(spectrum.conj(), n=n_fft, dim=0)   # [Nt, N, E]
-    return rf.transpose(1, 2)                                # [Nt, E, N]: mismo formato que Simus (M30)
+    rf = torch.fft.irfft(spectrum.conj(), n=n_fft, dim=0)
+    return rf
