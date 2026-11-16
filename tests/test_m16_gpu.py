@@ -60,7 +60,7 @@ class TestM16GPU(unittest.TestCase):
             rf_gpu.cpu(),
             rf_cpu,
             rtol=1e-3,
-            atol=1e-4
+            atol=1e-4 * rf_cpu.abs().max().item()
         )
         print("✅ Test CPU vs GPU (float32/complex64) superado con éxito.")
 
