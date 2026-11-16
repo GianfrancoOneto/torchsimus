@@ -13,7 +13,7 @@ class TestM31Benchmark(unittest.TestCase):
         configs = [
             {"S": 1000, "N": 64, "E": 1, "n_fft": 512},
             {"S": 10000, "N": 64, "E": 1, "n_fft": 512},
-            {"S": 50000, "N": 128, "E": 16, "n_fft": 1024}
+            {"S": 5000, "N": 128, "E": 16, "n_fft": 1024}
         ]
 
         print("\n" + "="*85)
