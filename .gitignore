@@ -1,5 +1,5 @@
+*.gif
 __pycache__/
 *.egg-info/
 build/
 dist/
-*.gif
