@@ -1,14 +1,17 @@
 import torch
 
-def propagation_2d(r, frequency, c=1540.0):
+def propagation_2d(r: torch.Tensor, frequency: torch.Tensor, c: float = 1540.0) -> torch.Tensor:
     k = 2 * torch.pi * frequency / c
     return torch.exp(1j * k * r) / torch.sqrt(r)
 
-def tx_weights(frequency, delays, apodization):
-    omega = 2 * torch.pi * frequency
-    A = apodization * torch.exp(1j * omega * delays)
-    return A.T
-
-def propagation_2d_frequency(r, frequencies, c=1540.0):
+def propagation_2d_frequency(r: torch.Tensor, frequencies: torch.Tensor, c: float = 1540.0) -> torch.Tensor:
     k = (2 * torch.pi * frequencies / c)[:, None, None]
-    return torch.exp(1j * k * r[None]) / torch.sqrt(r)[None]
+    return torch.exp(1j * k * r[None, :, :]) / torch.sqrt(r)[None, :, :]
+
+def tx_weights(frequency: torch.Tensor, delays: torch.Tensor, apodization: torch.Tensor) -> torch.Tensor:
+    omega = 2 * torch.pi * frequency
+    if frequency.ndim == 0:
+        return apodization * torch.exp(1j * omega * delays)
+    else:
+        phase = omega[:, None, None] * delays[None, :, :]
+        return apodization[None, :, :] * torch.exp(1j * phase)
